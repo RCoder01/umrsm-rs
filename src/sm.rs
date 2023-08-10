@@ -4,9 +4,16 @@ use std::{
     marker::PhantomData,
 };
 
-#[derive(Default)]
 pub struct StateMachine<Data> {
     states: HashMap<TypeId, Box<dyn StateHolder<Data>>>,
+}
+
+impl<D> Default for StateMachine<D> {
+    fn default() -> Self {
+        Self {
+            states: Default::default(),
+        }
+    }
 }
 
 impl<D> StateMachine<D> {
@@ -15,7 +22,7 @@ impl<D> StateMachine<D> {
             .entry(TypeId::of::<T>())
             .or_insert(Box::new(StateHolderStruct::<T>::default()));
     }
-    
+
     pub fn runner<Start: State>(
         &self,
         initial_data: D,
@@ -31,7 +38,7 @@ impl<D> StateMachine<D> {
 
 pub struct StateMachineRunner<'a, Data> {
     machine: &'a StateMachine<Data>,
-    data: Data,
+    pub data: Data,
     state: Box<dyn StateInternal<Data>>,
     state_id: TypeId,
 }
@@ -108,35 +115,42 @@ impl<'a, D> StateMachineRunner<'a, D> {
         return StepOutcome::Continue { machine: self };
     }
 
+    pub fn step_debug(self) -> Result<Self, Option<D>> {
+        match self.step() {
+            StepOutcome::Continue { machine } => Ok(machine),
+            StepOutcome::Transition {
+                machine,
+                start,
+                transition,
+                end,
+            } => {
+                println!("{start} --[{transition}]--> {end}");
+                Ok(machine)
+            }
+            StepOutcome::Complete {
+                data,
+                start,
+                transition,
+            } => {
+                println!("{start} --[{transition}]--> END");
+                Err(Some(data))
+            }
+            StepOutcome::StateNotFound {
+                start,
+                transition,
+                end,
+            } => {
+                println!("{start} --[{transition}]--> {end:?}? ABORT!");
+                Err(None)
+            }
+        }
+    }
+
     pub fn run_to_completion(mut self) -> Option<D> {
         loop {
-            self = match self.step() {
-                StepOutcome::Continue { machine } => machine,
-                StepOutcome::Transition {
-                    machine,
-                    start,
-                    transition,
-                    end,
-                } => {
-                    println!("{start} --[{transition}]--> {end}");
-                    machine
-                },
-                StepOutcome::Complete {
-                    data,
-                    start,
-                    transition,
-                } => {
-                    println!("{start} --[{transition}]--> END");
-                    break Some(data);
-                }
-                StepOutcome::StateNotFound {
-                    start,
-                    transition,
-                    end,
-                } => {
-                    println!("{start} --[{transition}]--> {end:?}? ABORT!");
-                    break None;
-                }
+            self = match self.step_debug() {
+                Ok(machine) => machine,
+                Err(data) => return data,
             }
         }
     }
@@ -171,7 +185,8 @@ pub trait State: Default + 'static {
     type Transition: IntoOutcome;
     type Data;
 
-    fn init(&mut self, previous: Box<Self::Income>);
+    #[allow(unused)]
+    fn init(&mut self, previous: Box<Self::Income>) {}
     fn handle(&mut self, data: &mut Self::Data) -> Self::Transition;
 
     fn name(&self) -> String {
@@ -202,16 +217,6 @@ where
 }
 
 pub struct OutcomeData<T: State>(T::Income, String);
-
-// impl<T> Default for OutcomeData<T>
-// where
-//     T::Income: Default,
-//     T: State,
-// {
-//     fn default() -> Self {
-//         Self(Default::default())
-//     }
-// }
 
 /// If data does not return the incoming data associated with the state corresponding to the result of state_type then the state machine will likely panic
 pub trait Outcome {
@@ -249,7 +254,7 @@ where
         OutcomeData(data, type_name::<T>().to_string())
     }
 
-    pub fn with_name(data: T::Income, name: String) -> OutcomeData<T> {
+    pub const fn with_name(data: T::Income, name: String) -> OutcomeData<T> {
         OutcomeData(data, name)
     }
 }

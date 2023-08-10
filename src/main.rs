@@ -1,15 +1,19 @@
-fn main() {
-    let mut machine = StateMachine::default();
-    machine.add_state::<Start>();
-    machine.add_state::<Mid>();
-    machine.add_state::<Stop>();
-    let runner = machine
-        .runner::<Start>(0, ())
-        .expect("Start exists in machine");
-    dbg!(runner.run_to_completion());
-}
-
+mod constants;
+mod standard_run;
 use umrsm_rs::sm::{IntoOutcome, Outcome, OutcomeData, State, StateMachine};
+mod sub_sim;
+
+fn main() {
+    // let mut machine = StateMachine::default();
+    // machine.add_state::<Start>();
+    // machine.add_state::<Mid>();
+    // machine.add_state::<Stop>();
+    // let runner = machine
+    //     .runner::<Start>(7, ())
+    //     .expect("Start exists in machine");
+    // dbg!(runner.run_to_completion());
+    standard_run::run();
+}
 
 type Data = usize;
 
@@ -18,9 +22,7 @@ struct Start;
 
 impl State for Start {
     type Income = ();
-
     type Transition = OutcomeData<Mid>;
-
     type Data = Data;
 
     fn init(&mut self, _previous: Box<Self::Income>) {}
@@ -43,16 +45,13 @@ enum MidOutcome {
 impl IntoOutcome for MidOutcome {
     fn into_outcome(self) -> Box<dyn Outcome> {
         match self {
-            MidOutcome::Continue(d) => OutcomeData::<Mid>::with_name(
-                d,
-                "MidOutcome::Continue".to_string(),
-            )
-            .into_outcome(),
-            MidOutcome::End(v) => OutcomeData::<Stop>::with_name(
-                v.to_string(),
-                "MidOutcome::End".to_string(),
-            )
-            .into_outcome(),
+            MidOutcome::Continue(d) => {
+                OutcomeData::<Mid>::with_name(d, "MidOutcome::Continue".to_string()).into_outcome()
+            }
+            MidOutcome::End(v) => {
+                OutcomeData::<Stop>::with_name(v.to_string(), "MidOutcome::End".to_string())
+                    .into_outcome()
+            }
         }
     }
 }
@@ -74,6 +73,7 @@ impl State for Mid {
             MidOutcome::End(*data)
         } else {
             *data += 1;
+            println!("{data}");
             MidOutcome::Continue(*data as i32 + 10000)
         }
     }
