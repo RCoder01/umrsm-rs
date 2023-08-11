@@ -14,7 +14,7 @@ use umrsm_rs::{
         ensure_range, FFConfig, LinearFeedforward, PIDConfig, PIDController, SpeedManager,
     },
     sm::{BoxedOutcome, IntoOutcome, Outcome, OutcomeData, State, StateMachine, ContinueOutcome},
-    sm_ext::{TimedState, TimedStateIncome, TimedStateStruct},
+    sm_ext::{TimedState, TimedStateStruct},
 };
 
 #[derive(Debug)]
@@ -58,7 +58,9 @@ pub fn run() {
         .expect("Machine has Start");
     let data = loop {
         let duration = Duration::from_secs_f32(1. / 50.);
-        runner = match runner.step_debug() {
+        let result = runner.step();
+        result.print_if_notable();
+        runner = match result.into() {
             Ok(machine) => machine,
             Err(data) => break data,
         };
@@ -70,7 +72,7 @@ pub fn run() {
         stdout().flush().unwrap();
         std::thread::sleep(duration);
     };
-    dbg!(data);
+    // dbg!(data);
 }
 
 #[derive(Default)]

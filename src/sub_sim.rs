@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::{fmt::Debug, time::Duration};
 
 use umrsm_rs::controller::{FFConfig, LinearFeedforward, PIDConfig, PIDController, SpeedManager};

@@ -2,6 +2,7 @@ use core::fmt;
 use std::{
     any::{type_name, Any, TypeId},
     collections::HashMap,
+    fmt::Display,
     marker::PhantomData,
 };
 
@@ -28,12 +29,16 @@ impl<D> Default for StateMachine<D> {
 }
 
 impl<D> StateMachine<D> {
+    /// Adds a state to the state machine
+    /// The `Data` associated type of the state must match that of all the other states in the state machine
     pub fn add_state<T: State<Data = D>>(&mut self) {
         self.states
             .entry(TypeId::of::<T>())
             .or_insert(Box::new(StateHolderStruct::<T>::default()));
     }
 
+    /// Create a state machine runner from the provided start state
+    /// Returns None if the provided start state is not present in the state machine
     pub fn runner<Start: State>(
         &self,
         initial_data: D,
@@ -64,6 +69,7 @@ impl<'a, D: fmt::Debug + 'static> fmt::Debug for StateMachineRunner<'a, D> {
             .finish()
     }
 }
+
 pub enum StepOutcome<'a, Data> {
     Continue {
         machine: StateMachineRunner<'a, Data>,
@@ -91,6 +97,23 @@ pub enum StepOutcome<'a, Data> {
         expected_type: TypeId,
         received_data: Box<dyn Any>,
     },
+}
+
+impl<'a, D> StepOutcome<'a, D> {
+    /// Returns false if and only if Self == StepOutcome::Continue
+    pub fn is_notable(&self) -> bool {
+        match self {
+            StepOutcome::Continue { .. } => false,
+            _ => true,
+        }
+    }
+
+    /// Prints self if it is non-empty
+    pub fn print_if_notable(&self) {
+        if self.is_notable() {
+            println!("{self}");
+        }
+    }
 }
 
 impl<'a, D: fmt::Debug + 'static> fmt::Debug for StepOutcome<'a, D> {
@@ -150,7 +173,61 @@ impl<'a, D: fmt::Debug + 'static> fmt::Debug for StepOutcome<'a, D> {
     }
 }
 
+impl<'a, D> Display for StepOutcome<'a, D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StepOutcome::Continue { .. } => {Ok(())}
+            StepOutcome::Transition {
+                start,
+                transition,
+                end,
+                ..
+            } => {
+                write!(f, "{start} --[{transition}]--> {end}")
+            }
+            StepOutcome::Complete {
+                start, transition, ..
+            } => {
+                write!(f, "{start} --[{transition}]--> END")
+            }
+            StepOutcome::StateNotFound {
+                start,
+                transition,
+                end,
+            } => {
+                write!(f, "{start} --[{transition}]--> {end:?}? ABORT!").and(
+                    write!(f, "Type {end:?} does not exist in the state machine"))
+                
+            }
+            StepOutcome::IncorrectTransition {
+                start,
+                transition,
+                end,
+                expected_type,
+                received_data,
+            } => {
+                write!(f, "{start} --[{transition}!]--> {end}").and(
+                    write!(f, "{end} expected incoming data of type {expected_type:?} but received data of type {:?} from transition {transition}", received_data.type_id()))
+            }
+        }
+    }
+}
+
+impl<'a, D> From<StepOutcome<'a, D>> for Result<StateMachineRunner<'a, D>, Option<D>> {
+    fn from(value: StepOutcome<'a, D>) -> Self {
+        match value {
+            StepOutcome::Continue { machine } => Ok(machine),
+            StepOutcome::Transition { machine, .. } => Ok(machine),
+            StepOutcome::Complete { data, .. } => Err(Some(data)),
+            StepOutcome::StateNotFound { .. } => Err(None),
+            StepOutcome::IncorrectTransition { .. } => Err(None),
+        }
+    }
+}
+
 impl<'a, D> StateMachineRunner<'a, D> {
+    /// Create a state machine runner from the provided start state
+    /// Returns None if the provided start state is not present in the given state machine
     pub fn new<Start: State>(
         machine: &'a StateMachine<D>,
         data: D,
@@ -169,6 +246,8 @@ impl<'a, D> StateMachineRunner<'a, D> {
         })
     }
 
+    /// Perform one step of the state machine
+    /// Returns an outcome representing all possible outcomes of the step
     pub fn step(mut self) -> StepOutcome<'a, D> {
         let outcome = self.state.handle(&mut self.data);
         if outcome.state_type() == self.state_id {
@@ -176,19 +255,19 @@ impl<'a, D> StateMachineRunner<'a, D> {
         }
         let start = self.state.name();
         let transition = outcome.name();
-        if outcome.state_type() == TypeId::of::<()>() {
+        self.state_id = outcome.state_type();
+        if self.state_id == TypeId::of::<()>() {
             return StepOutcome::Complete {
                 data: self.data,
                 start,
                 transition,
             };
         }
-        self.state_id = outcome.state_type();
         let Some(state) = self.machine.make_state(self.state_id) else {
             return StepOutcome::StateNotFound {
                 start,
                 transition,
-                end: outcome.state_type(),
+                end: self.state_id,
             };
         };
         self.state = state;
@@ -210,52 +289,22 @@ impl<'a, D> StateMachineRunner<'a, D> {
         };
     }
 
-    pub fn step_debug(self) -> Result<Self, Option<D>> {
-        match self.step() {
-            StepOutcome::Continue { machine } => Ok(machine),
-            StepOutcome::Transition {
-                machine,
-                start,
-                transition,
-                end,
-            } => {
-                println!("{start} --[{transition}]--> {end}");
-                Ok(machine)
-            }
-            StepOutcome::Complete {
-                data,
-                start,
-                transition,
-            } => {
-                println!("{start} --[{transition}]--> END");
-                Err(Some(data))
-            }
-            StepOutcome::StateNotFound {
-                start,
-                transition,
-                end,
-            } => {
-                println!("{start} --[{transition}]--> {end:?}? ABORT!");
-                println!("Type {end:?} does not exist in the state machine");
-                Err(None)
-            }
-            StepOutcome::IncorrectTransition {
-                start,
-                transition,
-                end,
-                expected_type,
-                received_data,
-            } => {
-                println!("{start} --[{transition}!]--> {end}");
-                println!("{end} expected incoming data of type {expected_type:?} but received data of type {:?} from transition {transition}", received_data.type_id());
-                Err(None)
+    /// Run the state machine until it either errors or completes
+    pub fn run_to_completion(mut self) -> Option<D> {
+        loop {
+            self = match self.step().into() {
+                Ok(machine) => machine,
+                Err(data) => return data,
             }
         }
     }
 
-    pub fn run_to_completion(mut self) -> Option<D> {
+    /// Run to completion but print all notable steps
+    pub fn run_to_completion_verbose(mut self) -> Option<D> {
         loop {
-            self = match self.step_debug() {
+            let result = self.step();
+            result.print_if_notable();
+            self = match result.into() {
                 Ok(machine) => machine,
                 Err(data) => return data,
             }
@@ -263,9 +312,12 @@ impl<'a, D> StateMachineRunner<'a, D> {
     }
 }
 
+/// Used to remember how to construct states through the StateHolder trait
 #[derive(Default)]
 struct StateHolderStruct<T: State>(PhantomData<T>);
 
+/// Holding `Box<dyn StateHolder>` allows the state machine to only hold the 
+/// active state and construction instructions for all other states
 trait StateHolder<Data> {
     fn new(&self) -> Box<dyn StateInternal<Data>>;
 }
@@ -281,6 +333,7 @@ where
     }
 }
 
+/// Internal type used to represent possible missing state errors
 #[derive(Debug)]
 struct StateEntryError {
     expected: TypeId,
@@ -296,21 +349,35 @@ impl StateEntryError {
     }
 }
 
+/// Internal representation of a state which is object safe without specifying the associated types
 trait StateInternal<Data> {
     fn enter(&mut self, meta: Box<dyn Any>) -> Result<(), StateEntryError>;
     fn handle(&mut self, data: &mut Data) -> BoxedOutcome;
     fn name(&self) -> String;
 }
 
+/// The trait needed to represent a state in a state machine
+/// 
+/// Each type implementing State can only have one associated Data type,
+/// however allowing one State type to work with multiple data types is possible using
+/// a generic State type and a generic trait impl
 pub trait State: Default + 'static {
     type Income: 'static;
     type Transition: IntoOutcome;
     type Data;
 
+    /// This method is run once when initially transitioning to a state
+    /// 
+    /// previous contains the data sent by the previous state through its Outcome
     #[allow(unused)]
     fn init(&mut self, previous: Box<Self::Income>) {}
+    /// This method contains the logic of the state and returns a transition to indicate
+    /// which state the state machine should go to next (which may include the current state)
     fn handle(&mut self, data: &mut Self::Data) -> Self::Transition;
 
+    /// This method returns a state name used for debugging and readability
+    /// 
+    /// The return value of this method is not used for logic anywhere in the state machine
     fn name(&self) -> String {
         type_name::<Self>().to_string()
     }
@@ -336,9 +403,15 @@ where
     }
 }
 
+/// An Outcome type useful for transitioning from one state to itself
 #[derive(Debug, Default)]
 pub struct ContinueOutcome<T: State>(PhantomData<T>);
 
+/// An Outcome type useful for transiting from one state to another
+/// 
+/// Using this type as a Transition or a return from IntoOutcome ensures that
+/// the provided data is accurate to the type being transitioned to, 
+/// preventing one possible source of error
 #[derive(Debug)]
 pub struct OutcomeData<T: State>(T::Income, String);
 
@@ -346,6 +419,7 @@ impl<T> OutcomeData<T>
 where
     T: State,
 {
+    /// Construct a new outcome with the default name
     pub fn new(data: T::Income) -> OutcomeData<T> {
         OutcomeData(data, type_name::<T>().to_string())
     }
@@ -355,11 +429,21 @@ where
     }
 }
 
-/// If data does not return the incoming data associated with the state corresponding to the result of state_type then the state machine will likely panic
+/// If data does not return the incoming data associated with the state corresponding
+/// to the result of state_type then the state machine will return an error
 pub trait Outcome {
+    /// The typeid of the next state
     fn state_type(&self) -> TypeId;
+
+    /// If transitioning to a new state, this method is called to provide the `Income` data
+    /// 
+    /// If transitioning from one state to itself, this method is not called,
+    /// so its return value is arbitrary
     fn data(self: Box<Self>) -> Box<dyn Any>;
 
+    /// This method returns a state name used for debugging and readability
+    /// 
+    /// The return value of this method is not used for logic anywhere in the state machine
     fn name(&self) -> String {
         type_name::<Self>().to_string()
     }
@@ -367,10 +451,32 @@ pub trait Outcome {
 
 pub type BoxedOutcome = Box<dyn Outcome>;
 
+impl Outcome for BoxedOutcome {
+    fn state_type(&self) -> TypeId {
+        (**self).state_type()
+    }
+
+    fn data(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+
+    fn name(&self) -> String {
+        (**self).name()
+    }
+}
+
+/// This trait defines which outcome a transition follows
+/// 
+/// IntoOutcome is blanket implemented for all types which implement Outcome,
+/// so for states with only a single possible transition, using an Outcome type
+/// directly for the transition is likely preferred
 pub trait IntoOutcome {
     fn into_outcome(self) -> BoxedOutcome;
 }
 
+/// The singular success endpoint for all state machines
+/// 
+/// All end states or transitions must return () as their transition or outcome
 impl Outcome for () {
     fn state_type(&self) -> TypeId {
         TypeId::of::<()>()
@@ -402,12 +508,18 @@ where
     }
 }
 
-impl<T> Outcome for ContinueOutcome<T> where T: State {
+impl<T> Outcome for ContinueOutcome<T>
+where
+    T: State,
+{
     fn state_type(&self) -> TypeId {
         TypeId::of::<T>()
     }
 
     fn data(self: Box<Self>) -> Box<dyn Any> {
+        // Since this outcome is only used for states transitioning to themselves,
+        // this method will never be called and its return is arbitrary
+        // By returning a unit type, this Box does not allocate any heap memory
         Box::new(())
     }
 

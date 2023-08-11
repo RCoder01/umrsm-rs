@@ -5,6 +5,10 @@ use std::{
 
 use crate::sm::{IntoOutcome, State};
 
+/// Type useful for States which may loop endlessly
+/// 
+/// Adds a timeout, after which a separate method is called to allow for
+/// short-circuiting after a given period
 pub trait TimedState: Default + 'static {
     type Income: 'static;
     type Transition: IntoOutcome;
@@ -22,6 +26,45 @@ pub trait TimedState: Default + 'static {
     }
 }
 
+/// This struct wraps TimedState types and provides a functional State implementation
+/// for all TimedState types
+/// 
+/// ```
+/// use std::time::{Duration, Instant};
+/// use umrsm_rs::{sm::{BoxedOutcome, ContinueOutcome, IntoOutcome, StateMachine}, sm_ext::{TimedState, TimedStateStruct}};
+/// #[derive(Default)]
+/// struct MayLoopInner;
+/// 
+/// impl TimedState for MayLoopInner {
+///     type Income = ();
+///     type Transition = BoxedOutcome;
+///     type Data = usize;
+/// 
+///     fn init(&mut self, previous: Box<Self::Income>) -> Option<Duration> {
+///         Some(Duration::from_secs_f32(1.5))
+///     }
+/// 
+///     fn handle_if_not_timeout(&mut self, data: &mut Self::Data) -> Self::Transition {
+///         *data += 1;
+///         println!("Start: {:?}", Instant::now());
+///         ContinueOutcome::<MayLoop>::default().into_outcome()
+///     }
+/// 
+///     fn handle_once_timeout(&mut self, data: &mut Self::Data) -> Self::Transition {
+///         println!("End: {:?}", Instant::now());
+///         ().into_outcome()
+///     }
+/// }
+/// 
+/// type MayLoop = TimedStateStruct<MayLoopInner>;
+/// 
+/// fn main() {
+///     let mut machine = StateMachine::default();
+///     machine.add_state::<MayLoop>();
+/// 
+///     let runner = machine.runner::<MayLoop>(0, ()).expect("MayLoop exists in the machine");
+///     assert_ne!(runner.run_to_completion().expect("Should not error"), 0);
+/// }
 pub struct TimedStateStruct<S: TimedState> {
     timeout: Duration,
     start_time: Instant,
@@ -35,40 +78,6 @@ impl<S: TimedState> Default for TimedStateStruct<S> {
             start_time: Instant::now(),
             state: Default::default(),
         }
-    }
-}
-
-#[derive(Default)]
-pub struct TimedStateIncome<S: TimedState> {
-    pub timeout: Option<Duration>,
-    pub other: S::Income,
-}
-
-impl<S: TimedState> TimedStateIncome<S> {
-    pub const fn new(income: S::Income) -> Self {
-        Self {
-            timeout: None,
-            other: income,
-        }
-    }
-
-    pub const fn with_timeout(income: S::Income, timeout: Duration) -> Self {
-        Self {
-            timeout: Some(timeout),
-            other: income,
-        }
-    }
-}
-
-impl<S: TimedState> From<(S::Income,)> for TimedStateIncome<S> {
-    fn from(value: (S::Income,)) -> Self {
-        Self::new(value.0)
-    }
-}
-
-impl<S: TimedState> From<(S::Income, Duration)> for TimedStateIncome<S> {
-    fn from(value: (S::Income, Duration)) -> Self {
-        Self::with_timeout(value.0, value.1)
     }
 }
 
