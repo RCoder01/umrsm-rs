@@ -171,43 +171,43 @@ impl<'a, D> StateMachineRunner<'a, D> {
 
     pub fn step(mut self) -> StepOutcome<'a, D> {
         let outcome = self.state.handle(&mut self.data);
-        if outcome.state_type() != self.state_id {
-            let start = self.state.name();
-            let transition = outcome.name();
-            if outcome.state_type() == TypeId::of::<()>() {
-                return StepOutcome::Complete {
-                    data: self.data,
-                    start,
-                    transition,
-                };
-            }
-            self.state_id = outcome.state_type();
-            let Some(state) = self.machine.make_state(self.state_id) else {
-                return StepOutcome::StateNotFound {
-                    start,
-                    transition,
-                    end: outcome.state_type(),
-                };
-            };
-            self.state = state;
-            let end = self.state.name();
-            return match self.state.enter(outcome.data()) {
-                Ok(_) => StepOutcome::Transition {
-                    machine: self,
-                    start,
-                    transition,
-                    end,
-                },
-                Err(data) => StepOutcome::IncorrectTransition {
-                    start,
-                    transition,
-                    end,
-                    expected_type: data.expected,
-                    received_data: data.received,
-                },
+        if outcome.state_type() == self.state_id {
+            return StepOutcome::Continue { machine: self };
+        }
+        let start = self.state.name();
+        let transition = outcome.name();
+        if outcome.state_type() == TypeId::of::<()>() {
+            return StepOutcome::Complete {
+                data: self.data,
+                start,
+                transition,
             };
         }
-        return StepOutcome::Continue { machine: self };
+        self.state_id = outcome.state_type();
+        let Some(state) = self.machine.make_state(self.state_id) else {
+            return StepOutcome::StateNotFound {
+                start,
+                transition,
+                end: outcome.state_type(),
+            };
+        };
+        self.state = state;
+        let end = self.state.name();
+        return match self.state.enter(outcome.data()) {
+            Ok(_) => StepOutcome::Transition {
+                machine: self,
+                start,
+                transition,
+                end,
+            },
+            Err(data) => StepOutcome::IncorrectTransition {
+                start,
+                transition,
+                end,
+                expected_type: data.expected,
+                received_data: data.received,
+            },
+        };
     }
 
     pub fn step_debug(self) -> Result<Self, Option<D>> {
@@ -336,6 +336,9 @@ where
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ContinueOutcome<T: State>(PhantomData<T>);
+
 #[derive(Debug)]
 pub struct OutcomeData<T: State>(T::Income, String);
 
@@ -399,6 +402,20 @@ where
     }
 }
 
+impl<T> Outcome for ContinueOutcome<T> where T: State {
+    fn state_type(&self) -> TypeId {
+        TypeId::of::<T>()
+    }
+
+    fn data(self: Box<Self>) -> Box<dyn Any> {
+        Box::new(())
+    }
+
+    fn name(&self) -> String {
+        format!("ContinueOutcome::<{}>", type_name::<T>())
+    }
+}
+
 impl<T> IntoOutcome for T
 where
     T: Outcome + 'static,
@@ -419,6 +436,7 @@ mod tests {
         Normal,
         IncorrectTransition,
         Counting(u32),
+        // IncorrectStartTransition,
     }
 
     struct Start(bool);
@@ -434,6 +452,7 @@ mod tests {
         Continue,
         Working,
         WrongData,
+        // ContinueWrong,
     }
 
     impl Outcome for StartTransition {
@@ -441,6 +460,7 @@ mod tests {
             match self {
                 StartTransition::Working | StartTransition::WrongData => TypeId::of::<End>(),
                 StartTransition::Continue => TypeId::of::<Start>(),
+                // StartTransition::ContinueWrong => TypeId::of::<Start>(),
             }
         }
 
@@ -449,6 +469,7 @@ mod tests {
                 StartTransition::Working => Box::new(150isize),
                 StartTransition::WrongData => Box::new(..),
                 StartTransition::Continue => Box::new(0usize),
+                // StartTransition::ContinueWrong => Box::new(..),
             }
         }
 
@@ -478,6 +499,7 @@ mod tests {
                     Data::Normal => StartTransition::Working,
                     Data::IncorrectTransition => StartTransition::WrongData,
                     Data::Counting(_) => panic!("Data should not be initially set to unused"),
+                    // Data::IncorrectStartTransition => StartTransition::ContinueWrong,
                 };
                 *data = Data::Counting(10);
                 transition
@@ -745,7 +767,34 @@ mod tests {
 
         let runner = machine.runner::<Start>(Data::Normal, 1000).unwrap();
 
-        let data = runner.run_to_completion().expect("State machine should work successfully");
+        let data = runner
+            .run_to_completion()
+            .expect("State machine should work successfully");
         assert_eq!(data, Data::Counting(160));
     }
+
+    // #[test]
+    // fn unknown() {
+    //     let mut machine = StateMachine::default();
+    //     machine.add_state::<Start>();
+    //     machine.add_state::<End>();
+
+    //     let runner = machine.runner::<Start>(Data::Normal, 0).unwrap();
+    //     match runner.step() {
+    //         StepOutcome::IncorrectTransition {
+    //             start,
+    //             transition,
+    //             end,
+    //             expected_type,
+    //             received_data,
+    //         } => {
+    //             assert_eq!(start, "Start");
+    //             assert_eq!(transition, "ContinueWrong");
+    //             assert_eq!(end, "End");
+    //             assert_eq!(expected_type, TypeId::of::<usize>());
+    //             assert_eq!(received_data.downcast().expect("Returned box should be of type .."), Box::new(..));
+    //         }
+    //         e @ _ => panic!("Unexpeced runner outcome {e:?}"),
+    //     }
+    // }
 }

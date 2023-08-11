@@ -13,7 +13,7 @@ use umrsm_rs::{
     controller::{
         ensure_range, FFConfig, LinearFeedforward, PIDConfig, PIDController, SpeedManager,
     },
-    sm::{BoxedOutcome, IntoOutcome, Outcome, OutcomeData, State, StateMachine},
+    sm::{BoxedOutcome, IntoOutcome, Outcome, OutcomeData, State, StateMachine, ContinueOutcome},
     sm_ext::{TimedState, TimedStateIncome, TimedStateStruct},
 };
 
@@ -117,7 +117,7 @@ impl IntoOutcome for SubmergeOutcome {
                 OutcomeData::<AlignGate>::with_name((), name).into_outcome()
             }
             SubmergeOutcome::Unreached => {
-                OutcomeData::<Submerge>::with_name((), name).into_outcome()
+                ContinueOutcome::<Submerge>::default().into_outcome()
             }
         }
     }
@@ -174,7 +174,7 @@ impl IntoOutcome for AlignGateOutcome {
         let name = format!("{self:?}");
         match self {
             AlignGateOutcome::Unreached => {
-                OutcomeData::<AlignGate>::with_name(Default::default(), name).into_outcome()
+                ContinueOutcome::<AlignGate>::default().into_outcome()
             }
             AlignGateOutcome::Reached | AlignGateOutcome::Timeout => {
                 OutcomeData::<ApproachGate>::with_name((), name).into_outcome()
