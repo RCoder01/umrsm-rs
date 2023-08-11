@@ -2,7 +2,7 @@ UMRSM-RS
 ---
 A state machine framework inspired by the University of Michigan RoboSub State Machine framework in python, but written in rust (🚀🚀🚀🚀🚀🔥🔥🔥🚀🚀) for increased type safety (and performance I guess).
 
-Each state in the state machine is represented by a type which implements `State`, which has three associated types, `Income`, `Transition`, and `Data`.
+Each state in the state machine is represented by a type which implements [`State`](/src/sm.rs), which has three associated types, `Income`, `Transition`, and `Data`.
 
 `Data` is the data type which is shared by all states in the state machine and which persists for the duration of the machine's operation.
 
