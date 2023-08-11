@@ -12,6 +12,6 @@ Each state in the state machine is represented by a type which implements [`Stat
 
 `Outcome`s determine the state which the state machine should transition to. If the state determined by `Outcome` is different to the current state of the state machine, then the `Outcome` must also provides the `Income` data for the new state. Should the data provided by `Outcome` not match the type of `Income` for the new state or if the type indicated by the `Outcome` is not present, the `StateMachine`'s step function will return an error.
 
-All state machines loop forever, result in error, or end with a transition to `()`.
+All state machines loop forever, reach a state which isn't in the state machine, transition to a state with the wrong income data, panic in some state's implemented method, or end with a transition to `()`.
 
 Disclaimer: this project is not affiliated with The Rust Foundation™ and does not claim to be in any form.
