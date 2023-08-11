@@ -13,7 +13,7 @@ use umrsm_rs::{
     controller::{
         ensure_range, FFConfig, LinearFeedforward, PIDConfig, PIDController, SpeedManager,
     },
-    sm::{IntoOutcome, Outcome, OutcomeData, State, StateMachine, BoxedOutcome},
+    sm::{BoxedOutcome, IntoOutcome, Outcome, OutcomeData, State, StateMachine},
     sm_ext::{TimedState, TimedStateIncome, TimedStateStruct},
 };
 

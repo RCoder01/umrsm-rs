@@ -1,6 +1,6 @@
 mod constants;
 mod standard_run;
-use umrsm_rs::sm::{IntoOutcome, Outcome, OutcomeData, State, StateMachine, BoxedOutcome};
+use umrsm_rs::sm::{BoxedOutcome, IntoOutcome, OutcomeData, State};
 mod sub_sim;
 
 fn main() {
