@@ -11,7 +11,9 @@ pub trait TimedState: Default + 'static {
     type Data;
 
     #[allow(unused)]
-    fn init(&mut self, previous: Self::Income) {}
+    fn init(&mut self, previous: Box<Self::Income>) -> Option<Duration> {
+        None
+    }
     fn handle_if_not_timeout(&mut self, data: &mut Self::Data) -> Self::Transition;
     fn handle_once_timeout(&mut self, data: &mut Self::Data) -> Self::Transition;
 
@@ -58,17 +60,28 @@ impl<S: TimedState> TimedStateIncome<S> {
     }
 }
 
+impl<S: TimedState> From<(S::Income,)> for TimedStateIncome<S> {
+    fn from(value: (S::Income,)) -> Self {
+        Self::new(value.0)
+    }
+}
+
+impl<S: TimedState> From<(S::Income, Duration)> for TimedStateIncome<S> {
+    fn from(value: (S::Income, Duration)) -> Self {
+        Self::with_timeout(value.0, value.1)
+    }
+}
+
 impl<S: TimedState> State for TimedStateStruct<S> {
-    type Income = TimedStateIncome<S>;
+    type Income = S::Income;
     type Transition = S::Transition;
     type Data = S::Data;
 
     fn init(&mut self, previous: Box<Self::Income>) {
         self.start_time = Instant::now();
-        if let Some(new_timeout) = previous.timeout {
-            self.timeout = new_timeout;
+        if let Some(timeout) = self.state.init(previous) {
+            self.timeout = timeout;
         }
-        self.state.init(previous.other)
     }
 
     fn handle(&mut self, data: &mut Self::Data) -> Self::Transition {

@@ -63,6 +63,13 @@ pub enum StepOutcome<'a, Data> {
         transition: String,
         end: TypeId,
     },
+    IncorrectTransition {
+        start: String,
+        transition: String,
+        end: String,
+        expected_type: TypeId,
+        received_data: Box<dyn Any>,
+    },
 }
 
 impl<'a, D> StateMachineRunner<'a, D> {
@@ -73,7 +80,9 @@ impl<'a, D> StateMachineRunner<'a, D> {
     ) -> Option<Self> {
         let state_id = TypeId::of::<Start>();
         let mut state = machine.make_state(state_id)?;
-        state.enter(Box::new(start));
+        state
+            .enter(Box::new(start))
+            .expect("Start::Income will always match Start transition expected data");
         Some(Self {
             machine,
             data,
@@ -96,20 +105,28 @@ impl<'a, D> StateMachineRunner<'a, D> {
             }
             self.state_id = outcome.state_type();
             let Some(state) = self.machine.make_state(self.state_id) else {
-                return StepOutcome::StateNotFound{
+                return StepOutcome::StateNotFound {
                     start,
                     transition,
                     end: outcome.state_type(),
                 };
             };
             self.state = state;
-            self.state.enter(outcome.data());
             let end = self.state.name();
-            return StepOutcome::Transition {
-                machine: self,
-                start,
-                transition,
-                end,
+            return match self.state.enter(outcome.data()) {
+                Ok(_) => StepOutcome::Transition {
+                    machine: self,
+                    start,
+                    transition,
+                    end,
+                },
+                Err(data) => StepOutcome::IncorrectTransition {
+                    start,
+                    transition,
+                    end,
+                    expected_type: data.expected,
+                    received_data: data.received,
+                },
             };
         }
         return StepOutcome::Continue { machine: self };
@@ -141,6 +158,18 @@ impl<'a, D> StateMachineRunner<'a, D> {
                 end,
             } => {
                 println!("{start} --[{transition}]--> {end:?}? ABORT!");
+                println!("Type {end:?} does not exist in the state machine");
+                Err(None)
+            }
+            StepOutcome::IncorrectTransition {
+                start,
+                transition,
+                end,
+                expected_type,
+                received_data,
+            } => {
+                println!("{start} --[{transition}!]--> {end}");
+                println!("{end} expected incoming data of type {expected_type:?} but received data of type {:?} from transition {transition}", received_data.type_id());
                 Err(None)
             }
         }
@@ -174,9 +203,24 @@ where
     }
 }
 
+#[derive(Debug)]
+struct StateEntryError {
+    expected: TypeId,
+    received: Box<dyn Any>,
+}
+
+impl StateEntryError {
+    fn from_any<T: 'static>(any: Box<dyn Any>) -> Self {
+        Self {
+            expected: TypeId::of::<T>(),
+            received: any,
+        }
+    }
+}
+
 trait StateInternal<Data> {
-    fn enter(&mut self, meta: Box<dyn Any>);
-    fn handle(&mut self, data: &mut Data) -> Box<dyn Outcome>;
+    fn enter(&mut self, meta: Box<dyn Any>) -> Result<(), StateEntryError>;
+    fn handle(&mut self, data: &mut Data) -> BoxedOutcome;
     fn name(&self) -> String;
 }
 
@@ -200,14 +244,12 @@ where
     I: 'static,
     O: IntoOutcome + 'static,
 {
-    fn enter(&mut self, meta: Box<dyn Any>) {
-        self.init(
-            meta.downcast()
-                .expect("Expected 'enter' type to match 'income' type"),
-        )
+    fn enter(&mut self, meta: Box<dyn Any>) -> Result<(), StateEntryError> {
+        self.init(meta.downcast().map_err(StateEntryError::from_any::<I>)?);
+        Ok(())
     }
 
-    fn handle(&mut self, data: &mut D) -> Box<dyn Outcome> {
+    fn handle(&mut self, data: &mut D) -> BoxedOutcome {
         self.handle(data).into_outcome()
     }
 
@@ -217,6 +259,19 @@ where
 }
 
 pub struct OutcomeData<T: State>(T::Income, String);
+
+impl<T> OutcomeData<T>
+where
+    T: State,
+{
+    pub fn new(data: T::Income) -> OutcomeData<T> {
+        OutcomeData(data, type_name::<T>().to_string())
+    }
+
+    pub const fn with_name(data: T::Income, name: String) -> OutcomeData<T> {
+        OutcomeData(data, name)
+    }
+}
 
 /// If data does not return the incoming data associated with the state corresponding to the result of state_type then the state machine will likely panic
 pub trait Outcome {
@@ -228,8 +283,10 @@ pub trait Outcome {
     }
 }
 
+pub type BoxedOutcome = Box<dyn Outcome>;
+
 pub trait IntoOutcome {
-    fn into_outcome(self) -> Box<dyn Outcome>;
+    fn into_outcome(self) -> BoxedOutcome;
 }
 
 impl Outcome for () {
@@ -243,19 +300,6 @@ impl Outcome for () {
 
     fn name(&self) -> String {
         "(Complete)".to_string()
-    }
-}
-
-impl<T> OutcomeData<T>
-where
-    T: State,
-{
-    pub fn new(data: T::Income) -> OutcomeData<T> {
-        OutcomeData(data, type_name::<T>().to_string())
-    }
-
-    pub const fn with_name(data: T::Income, name: String) -> OutcomeData<T> {
-        OutcomeData(data, name)
     }
 }
 
@@ -280,7 +324,7 @@ impl<T> IntoOutcome for T
 where
     T: Outcome + 'static,
 {
-    fn into_outcome(self) -> Box<dyn Outcome> {
+    fn into_outcome(self) -> BoxedOutcome {
         Box::new(self)
     }
 }

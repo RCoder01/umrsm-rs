@@ -1,6 +1,6 @@
 mod constants;
 mod standard_run;
-use umrsm_rs::sm::{IntoOutcome, Outcome, OutcomeData, State, StateMachine};
+use umrsm_rs::sm::{IntoOutcome, Outcome, OutcomeData, State, StateMachine, BoxedOutcome};
 mod sub_sim;
 
 fn main() {
@@ -43,7 +43,7 @@ enum MidOutcome {
 }
 
 impl IntoOutcome for MidOutcome {
-    fn into_outcome(self) -> Box<dyn Outcome> {
+    fn into_outcome(self) -> BoxedOutcome {
         match self {
             MidOutcome::Continue(d) => {
                 OutcomeData::<Mid>::with_name(d, "MidOutcome::Continue".to_string()).into_outcome()

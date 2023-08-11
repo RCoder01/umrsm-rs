@@ -1,235 +1,63 @@
-use std::{
-    marker::PhantomData,
-    ops::{Add, Div, Neg, Range, Rem, Sub},
-};
+use std::ops::Range;
 
-fn ensure_range<T>(mut value: T, range: &Range<T>) -> T
-where
-    T: Copy
-        + Sub<Output = T>
-        + Add<Output = T>
-        + Rem<Output = T>
-        + Neg<Output = T>
-        + Div<f32, Output = T>
-        + PartialOrd,
-{
+pub fn ensure_range(mut value: f32, range: Range<f32>) -> f32 {
     let range_len = range.end - range.start;
-    value = value - range.start;
-    value = value % range_len;
-    value = value + range.start;
-    if value < -range_len / (2.).into() {
-        value = value - range_len;
+    value -= range.start;
+    value %= range_len;
+    value += range.start;
+    if value < -range_len / 2. {
+        value -= range_len;
     }
-    if value > range_len / (2.).into() {
-        value = value + range_len;
+    if value > range_len / 2. {
+        value += range_len;
     }
     value
 }
 
-pub trait Controller<T, U> {
-    fn calculate(&mut self, measurement: T) -> U;
+#[derive(Debug, Default, Clone)]
+pub struct Speeds {
+    pos: f32,
+    vel: f32,
+    acc: f32,
 }
 
-pub trait SetpointController<T> {
-    fn set_setpoint(&mut self, setpoint: Option<T>);
-    fn get_setpoint(&self) -> Option<T>;
-}
-
-macro_rules! pass_setpoint {
-    ($member: ident, $type: ty) => {
-        fn set_setpoint(&mut self, setpoint: Option<$type>) {
-            self.$member.set_setpoint(setpoint);
-        }
-
-        fn get_setpoint(&self) -> Option<$type> {
-            self.$member.get_setpoint()
-        }
-    };
-}
-
-#[derive(Debug, Default)]
-pub struct Speed<T> {
-    pos: T,
-    vel: T,
-    acc: T,
-}
-
-impl<T> Speed<T> {
-    fn new(pos: T, vel: T, acc: T) -> Self {
+impl Speeds {
+    pub fn new(pos: f32, vel: f32, acc: f32) -> Self {
         Self { pos, vel, acc }
     }
 }
 
 #[derive(Debug, Default)]
-pub struct SpeedController<T, U, C>
-where
-    C: Controller<Speed<T>, U>,
-{
-    last_pos: T,
-    last_vel: T,
-    controller: C,
-    output: PhantomData<U>,
+pub struct SpeedManager {
+    last_pos: f32,
+    last_vel: f32,
 }
 
-impl<T, U, C> SpeedController<T, U, C>
-where
-    C: Controller<Speed<T>, U>,
-{
-    pub const fn new(initial_pos: T, initial_vel: T, controller: C) -> Self {
+impl SpeedManager {
+    pub const fn new(initial_pos: f32, initial_vel: f32) -> Self {
         Self {
             last_pos: initial_pos,
             last_vel: initial_vel,
-            controller,
-            output: PhantomData,
         }
     }
 }
 
-impl<T, U, C> Controller<T, U> for SpeedController<T, U, C>
-where
-    T: Copy + Sub<Output = T>,
-    C: Controller<Speed<T>, U>,
-{
-    fn calculate(&mut self, measurement: T) -> U {
+impl SpeedManager {
+    pub fn calculate(&mut self, measurement: f32) -> Speeds {
         let vel = measurement - self.last_pos;
         let acc = vel - self.last_vel;
-        self.controller.calculate(Speed::new(measurement, vel, acc))
+        self.last_pos = measurement;
+        self.last_vel = vel;
+        Speeds::new(measurement, vel, acc)
     }
-}
 
-impl<T, U, V, C> SetpointController<V> for SpeedController<T, U, C>
-where
-    C: Controller<Speed<T>, U> + SetpointController<V>,
-{
-    pass_setpoint!(controller, V);
-}
-
-pub struct ContinuousSpeedController<T, U, C>
-where
-    C: Controller<Speed<T>, U>,
-{
-    last_pos: T,
-    last_vel: T,
-    range: Range<T>,
-    controller: C,
-    output: PhantomData<U>,
-}
-
-impl<T, U, C> ContinuousSpeedController<T, U, C>
-where
-    C: Controller<Speed<T>, U>,
-{
-    pub const fn new(initial_pos: T, initial_vel: T, range: Range<T>, controller: C) -> Self {
-        Self {
-            last_pos: initial_pos,
-            last_vel: initial_vel,
-            range,
-            controller,
-            output: PhantomData,
-        }
-    }
-}
-
-impl<C> Controller<Speed<f32>, f32> for ContinuousSpeedController<f32, f32, C>
-where
-    C: Controller<Speed<f32>, f32>,
-{
-    fn calculate(&mut self, measurement: Speed<f32>) -> f32 {
-        let pos = ensure_range(measurement.pos, &self.range);
-        let vel = ensure_range(measurement.pos - self.last_pos, &self.range);
+    pub fn calculate_continuous(&mut self, measurement: f32, range: Range<f32>) -> Speeds {
+        let pos = ensure_range(measurement, range.clone());
+        let vel = ensure_range(measurement - self.last_pos, range.clone());
         let acc = vel - self.last_vel;
-        self.controller.calculate(Speed::new(pos, vel, acc))
-    }
-}
-
-impl<T, U, V, C> SetpointController<V> for ContinuousSpeedController<T, U, C>
-where
-    C: Controller<Speed<T>, U> + SetpointController<V>,
-{
-    pass_setpoint!(controller, V);
-}
-
-#[derive(Debug, Default)]
-pub struct ContinuousController<T, U, C>
-where
-    C: Controller<T, U>,
-{
-    range: Range<T>,
-    controller: C,
-    output: PhantomData<U>,
-}
-
-impl<T, U, C> ContinuousController<T, U, C>
-where
-    C: Controller<T, U>,
-{
-    pub const fn new(range: Range<T>, controller: C) -> Self {
-        Self {
-            range,
-            controller,
-            output: PhantomData,
-        }
-    }
-}
-
-impl<C> Controller<f32, f32> for ContinuousController<f32, f32, C>
-where
-    C: Controller<f32, f32>,
-{
-    fn calculate(&mut self, measurement: f32) -> f32 {
-        self.controller
-            .calculate(ensure_range(measurement, &self.range))
-    }
-}
-
-impl<T, U, V, C> SetpointController<V> for ContinuousController<T, U, C>
-where
-    C: Controller<T, U> + SetpointController<V>,
-{
-    pass_setpoint!(controller, V);
-}
-
-#[derive(Debug, Default)]
-pub struct AdditiveController<C1, C2> {
-    controller_1: C1,
-    controller_2: C2,
-}
-
-impl<C1, C2> AdditiveController<C1, C2> {
-    pub const fn new(controller_1: C1, controller_2: C2) -> Self {
-        Self {
-            controller_1,
-            controller_2,
-        }
-    }
-}
-
-impl<T, C1, C2> Controller<T, f32> for AdditiveController<C1, C2>
-where
-    T: Copy,
-    C1: Controller<T, f32>,
-    C2: Controller<T, f32>,
-{
-    fn calculate(&mut self, measurement: T) -> f32 {
-        self.controller_1.calculate(measurement) + self.controller_2.calculate(measurement)
-    }
-}
-
-impl<T, C1, C2> SetpointController<T> for AdditiveController<C1, C2>
-where
-    T: Copy,
-    C1: SetpointController<T>,
-    C2: SetpointController<T>,
-{
-    fn set_setpoint(&mut self, setpoint: Option<T>) {
-        self.controller_1.set_setpoint(setpoint);
-        self.controller_2.set_setpoint(setpoint);
-    }
-
-    fn get_setpoint(&self) -> Option<T> {
-        self.controller_1
-            .get_setpoint()
-            .or(self.controller_2.get_setpoint())
+        self.last_pos = measurement;
+        self.last_vel = vel;
+        Speeds::new(pos, vel, acc)
     }
 }
 
@@ -271,9 +99,8 @@ impl PIDController {
     }
 }
 
-impl Controller<Speed<f32>, f32> for PIDController {
-    fn calculate(&mut self, speeds: Speed<f32>) -> f32 {
-        let Some(setpoint) = self.setpoint else {return 0.;};
+impl PIDController {
+    fn calculate_inner(&mut self, speeds: Speeds, setpoint: f32) -> f32 {
         let error = speeds.pos - setpoint;
         let d_output = speeds.vel * self.config.derivative;
         let p_output = error * self.config.proportional;
@@ -281,80 +108,65 @@ impl Controller<Speed<f32>, f32> for PIDController {
         let i_output = self.accum * self.config.integral;
         p_output + i_output + d_output
     }
-}
 
-impl SetpointController<f32> for PIDController {
-    fn set_setpoint(&mut self, new_setpoint: Option<f32>) {
+    pub fn calculate(&mut self, speeds: Speeds) -> f32 {
+        let Some(setpoint) = self.setpoint else {return 0.;};
+        self.calculate_inner(speeds, setpoint)
+    }
+
+    pub fn calculate_continuous(&mut self, speeds: Speeds, range: Range<f32>) -> f32 {
+        let Some(setpoint) = self.setpoint else {return 0.;};
+        let range_len = range.end - range.start;
+        let mut setpoint = ensure_range(setpoint, range);
+        if (setpoint - speeds.pos) < -range_len / 2. {
+            setpoint += range_len;
+        }
+        if (setpoint - speeds.pos) > range_len / 2. {
+            setpoint -= range_len;
+        }
+        self.calculate_inner(speeds, setpoint)
+    }
+
+    pub fn set_setpoint(&mut self, new_setpoint: Option<f32>) {
         if new_setpoint != self.setpoint {
             self.setpoint = new_setpoint;
             self.accum = 0.;
         }
     }
 
-    fn get_setpoint(&self) -> Option<f32> {
+    pub fn get_setpoint(&self) -> Option<f32> {
         self.setpoint
     }
 }
 
-
-// #[derive(Debug, Default)]
-// pub struct ContinuousPIDController {
-//     pid: PIDController,
-//     range: Range<f32>,
-// }
-
-// impl ContinuousPIDController {
-//     pub const fn new(pid: PIDController, range: Range<f32>) -> Self {
-//         Self {
-//             pid,
-//             range,
-//         }
-//     }
-// }
-
-// impl Controller<Speed<f32>, f32> for ContinuousPIDController {
-//     fn calculate(&mut self, speeds: Speed<f32>) -> f32 {
-//         let Some(setpoint) = self.pid.setpoint else {
-//             return self.pid.calculate(speeds);
-//         };
-//         let midpoint = (self.range.end - self.range.start) / 2. + self.range.start;
-//         let output = if (setpoint - self.range.start).abs() < (setpoint - midpoint).abs() {
-//             self.pid.setpoint = Some()
-//         } else {
-
-//         };
-//         0.
-//     }
-// }
-
-// impl SetpointController<f32> for ContinuousPIDController {
-//     pass_setpoint!(pid, f32);
-// }
-
 #[derive(Debug, Default)]
-pub struct LinearFeedforward<T> {
-    pub ks: T,
-    pub kv: T,
-    pub ka: T,
-    pub kj: T,
+pub struct FFConfig {
+    pub ks: f32,
+    pub kv: f32,
+    pub ka: f32,
+    pub kj: f32,
 }
 
-impl<T> LinearFeedforward<T> {
-    pub const fn new(ks: T, kv: T, ka: T, kj: T) -> Self {
+impl FFConfig {
+    pub const fn new(ks: f32, kv: f32, ka: f32, kj: f32) -> Self {
         Self { ks, kv, ka, kj }
     }
 }
 
-impl Controller<Speed<f32>, f32> for LinearFeedforward<f32> {
-    fn calculate(&mut self, speed: Speed<f32>) -> f32 {
-        self.ks + speed.pos * self.kv + speed.vel * self.ka + speed.acc * self.kj
-    }
+#[derive(Debug, Default)]
+pub struct LinearFeedforward {
+    pub config: FFConfig,
 }
 
-impl SetpointController<f32> for LinearFeedforward<f32> {
-    fn set_setpoint(&mut self, _setpoint: Option<f32>) {}
+impl LinearFeedforward {
+    pub const fn new(config: FFConfig) -> Self {
+        Self { config }
+    }
 
-    fn get_setpoint(&self) -> Option<f32> {
-        None
+    pub fn calculate(&self, speed: Speeds) -> f32 {
+        self.config.ks
+            + self.config.kv * speed.pos
+            + self.config.ka * speed.vel
+            + self.config.kj * speed.acc
     }
 }
