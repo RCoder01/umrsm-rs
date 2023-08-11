@@ -736,4 +736,16 @@ mod tests {
             e @ _ => panic!("Unexpeced runner outcome {e:?}"),
         }
     }
+
+    #[test]
+    fn working_3() {
+        let mut machine = StateMachine::default();
+        machine.add_state::<Start>();
+        machine.add_state::<End>();
+
+        let runner = machine.runner::<Start>(Data::Normal, 1000).unwrap();
+
+        let data = runner.run_to_completion().expect("State machine should work successfully");
+        assert_eq!(data, Data::Counting(160));
+    }
 }
