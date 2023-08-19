@@ -32,6 +32,7 @@ pub trait TimedState: Default + 'static {
 /// ```
 /// use std::time::{Duration, Instant};
 /// use umrsm_rs::{sm::{BoxedOutcome, ContinueOutcome, IntoOutcome, StateMachine}, sm_ext::{TimedState, TimedStateStruct}};
+/// 
 /// #[derive(Default)]
 /// struct MayLoopInner;
 /// 

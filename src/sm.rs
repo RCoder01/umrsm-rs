@@ -6,6 +6,12 @@ use std::{
     marker::PhantomData,
 };
 
+
+/// The struct which holds all the states in a state machine
+/// 
+/// This struct itself does not _run_ any state machine,
+/// a StateMachineRunner contains a reference to a StateMachine
+/// and an instance of the machine
 pub struct StateMachine<Data> {
     states: HashMap<TypeId, Box<dyn StateHolder<Data>>>,
 }
@@ -37,6 +43,11 @@ impl<D> StateMachine<D> {
             .or_insert(Box::new(StateHolderStruct::<T>::default()));
     }
 
+    /// Returns true if T was already in the state machine
+    pub fn remove_state<T: State<Data = D>>(&mut self) -> bool {
+        self.states.remove(&TypeId::of::<T>()).is_some()
+    }
+
     /// Create a state machine runner from the provided start state
     /// Returns None if the provided start state is not present in the state machine
     pub fn runner<Start: State>(
@@ -52,6 +63,8 @@ impl<D> StateMachine<D> {
     }
 }
 
+
+/// The state machine runner runs an instance of a given StateMachine
 pub struct StateMachineRunner<'a, Data> {
     machine: &'a StateMachine<Data>,
     pub data: Data,
