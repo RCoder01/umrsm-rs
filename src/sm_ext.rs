@@ -1,6 +1,6 @@
 use std::{
     any::type_name,
-    time::{Duration, Instant},
+    time::{Duration, Instant}, marker::PhantomData,
 };
 
 use crate::sm::{IntoOutcome, State};
@@ -9,17 +9,16 @@ use crate::sm::{IntoOutcome, State};
 /// 
 /// Adds a timeout, after which a separate method is called to allow for
 /// short-circuiting after a given period
-pub trait TimedState: Default + 'static {
+pub trait TimedState<Data: 'static>: Default + 'static {
     type Income: 'static;
     type Transition: IntoOutcome;
-    type Data;
 
     #[allow(unused)]
     fn init(&mut self, previous: Box<Self::Income>) -> Option<Duration> {
         None
     }
-    fn handle_if_not_timeout(&mut self, data: &mut Self::Data) -> Self::Transition;
-    fn handle_once_timeout(&mut self, data: &mut Self::Data) -> Self::Transition;
+    fn handle_if_not_timeout(&mut self, data: &mut Data) -> Self::Transition;
+    fn handle_once_timeout(&mut self, data: &mut Data) -> Self::Transition;
 
     fn name(&self) -> String {
         type_name::<Self>().to_string()
@@ -36,28 +35,27 @@ pub trait TimedState: Default + 'static {
 /// #[derive(Default)]
 /// struct MayLoopInner;
 /// 
-/// impl TimedState for MayLoopInner {
+/// impl TimedState<usize> for MayLoopInner {
 ///     type Income = ();
 ///     type Transition = BoxedOutcome;
-///     type Data = usize;
 /// 
 ///     fn init(&mut self, previous: Box<Self::Income>) -> Option<Duration> {
 ///         Some(Duration::from_secs_f32(1.5))
 ///     }
 /// 
-///     fn handle_if_not_timeout(&mut self, data: &mut Self::Data) -> Self::Transition {
+///     fn handle_if_not_timeout(&mut self, data: &mut usize) -> Self::Transition {
 ///         *data += 1;
 ///         println!("Start: {:?}", Instant::now());
-///         ContinueOutcome::<MayLoop>::default().into_outcome()
+///         ContinueOutcome::<usize, MayLoop>::default().into_outcome()
 ///     }
 /// 
-///     fn handle_once_timeout(&mut self, data: &mut Self::Data) -> Self::Transition {
+///     fn handle_once_timeout(&mut self, data: &mut usize) -> Self::Transition {
 ///         println!("End: {:?}", Instant::now());
 ///         ().into_outcome()
 ///     }
 /// }
 /// 
-/// type MayLoop = TimedStateStruct<MayLoopInner>;
+/// type MayLoop = TimedStateStruct<usize, MayLoopInner>;
 /// 
 /// fn main() {
 ///     let mut machine = StateMachine::default();
@@ -66,26 +64,27 @@ pub trait TimedState: Default + 'static {
 ///     let runner = machine.runner::<MayLoop>(0, ()).expect("MayLoop exists in the machine");
 ///     assert_ne!(runner.run_to_completion().expect("Should not error"), 0);
 /// }
-pub struct TimedStateStruct<S: TimedState> {
+pub struct TimedStateStruct<D: 'static, S: TimedState<D>> {
     timeout: Duration,
     start_time: Instant,
     state: S,
+    data: PhantomData<D>,
 }
 
-impl<S: TimedState> Default for TimedStateStruct<S> {
+impl<D: 'static, S: TimedState<D>> Default for TimedStateStruct<D, S> {
     fn default() -> Self {
         Self {
             timeout: Default::default(),
             start_time: Instant::now(),
             state: Default::default(),
+            data: PhantomData,
         }
     }
 }
 
-impl<S: TimedState> State for TimedStateStruct<S> {
+impl<D: 'static, S: TimedState<D>> State<D> for TimedStateStruct<D, S> {
     type Income = S::Income;
     type Transition = S::Transition;
-    type Data = S::Data;
 
     fn init(&mut self, previous: Box<Self::Income>) {
         self.start_time = Instant::now();
@@ -94,7 +93,7 @@ impl<S: TimedState> State for TimedStateStruct<S> {
         }
     }
 
-    fn handle(&mut self, data: &mut Self::Data) -> Self::Transition {
+    fn handle(&mut self, data: &mut D) -> Self::Transition {
         if (Instant::now() - self.start_time) > self.timeout {
             self.state.handle_once_timeout(data)
         } else {

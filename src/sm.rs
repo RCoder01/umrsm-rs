@@ -34,23 +34,23 @@ impl<D> Default for StateMachine<D> {
     }
 }
 
-impl<D> StateMachine<D> {
+impl<D: 'static> StateMachine<D> {
     /// Adds a state to the state machine
-    /// The `Data` associated type of the state must match that of all the other states in the state machine
-    pub fn add_state<T: State<Data = D>>(&mut self) {
+    /// The `Data` generic type of the state must match that of all the other states in the state machine
+    pub fn add_state<T: State<D>>(&mut self) {
         self.states
             .entry(TypeId::of::<T>())
-            .or_insert(Box::new(StateHolderStruct::<T>::default()));
+            .or_insert(Box::new(StateHolderStruct::<D, T>::default()));
     }
 
     /// Returns true if T was already in the state machine
-    pub fn remove_state<T: State<Data = D>>(&mut self) -> bool {
+    pub fn remove_state<T: State<D>>(&mut self) -> bool {
         self.states.remove(&TypeId::of::<T>()).is_some()
     }
 
     /// Create a state machine runner from the provided start state
     /// Returns None if the provided start state is not present in the state machine
-    pub fn runner<Start: State>(
+    pub fn runner<Start: State<D>>(
         &self,
         initial_data: D,
         start_transition_data: Start::Income,
@@ -238,10 +238,10 @@ impl<'a, D> From<StepOutcome<'a, D>> for Result<StateMachineRunner<'a, D>, Optio
     }
 }
 
-impl<'a, D> StateMachineRunner<'a, D> {
+impl<'a, D: 'static> StateMachineRunner<'a, D> {
     /// Create a state machine runner from the provided start state
     /// Returns None if the provided start state is not present in the given state machine
-    pub fn new<Start: State>(
+    pub fn new<Start: State<D>>(
         machine: &'a StateMachine<D>,
         data: D,
         start: Start::Income,
@@ -326,8 +326,13 @@ impl<'a, D> StateMachineRunner<'a, D> {
 }
 
 /// Used to remember how to construct states through the StateHolder trait
-#[derive(Default)]
-struct StateHolderStruct<T: State>(PhantomData<T>);
+struct StateHolderStruct<D: 'static, T: State<D>>(PhantomData<(T, D)>);
+
+impl<D: 'static, T: State<D>> Default for StateHolderStruct<D, T> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
 
 /// Holding `Box<dyn StateHolder>` allows the state machine to only hold the 
 /// active state and construction instructions for all other states
@@ -335,9 +340,9 @@ trait StateHolder<Data> {
     fn new(&self) -> Box<dyn StateInternal<Data>>;
 }
 
-impl<D, T, I, O> StateHolder<D> for StateHolderStruct<T>
+impl<D, T, I, O> StateHolder<D> for StateHolderStruct<D, T>
 where
-    T: State<Income = I, Transition = O, Data = D>,
+    T: State<D, Income = I, Transition = O>,
     I: 'static,
     O: IntoOutcome + 'static,
 {
@@ -370,14 +375,9 @@ trait StateInternal<Data> {
 }
 
 /// The trait needed to represent a state in a state machine
-/// 
-/// Each type implementing State can only have one associated Data type,
-/// however allowing one State type to work with multiple data types is possible using
-/// a generic State type and a generic trait impl
-pub trait State: Default + 'static {
+pub trait State<Data: 'static>: Default + 'static {
     type Income: 'static;
     type Transition: IntoOutcome;
-    type Data;
 
     /// This method is run once when initially transitioning to a state
     /// 
@@ -386,7 +386,7 @@ pub trait State: Default + 'static {
     fn init(&mut self, previous: Box<Self::Income>) {}
     /// This method contains the logic of the state and returns a transition to indicate
     /// which state the state machine should go to next (which may include the current state)
-    fn handle(&mut self, data: &mut Self::Data) -> Self::Transition;
+    fn handle(&mut self, data: &mut Data) -> Self::Transition;
 
     /// This method returns a state name used for debugging and readability
     /// 
@@ -396,9 +396,9 @@ pub trait State: Default + 'static {
     }
 }
 
-impl<T, I, O, D> StateInternal<D> for T
+impl<T, D: 'static, I, O> StateInternal<D> for T
 where
-    T: State<Income = I, Transition = O, Data = D>,
+    T: State<D, Income = I, Transition = O>,
     I: 'static,
     O: IntoOutcome + 'static,
 {
@@ -412,13 +412,19 @@ where
     }
 
     fn name(&self) -> String {
-        <Self as State>::name(&self)
+        <Self as State<D>>::name(&self)
     }
 }
 
 /// An Outcome type useful for transitioning from one state to itself
-#[derive(Debug, Default)]
-pub struct ContinueOutcome<T: State>(PhantomData<T>);
+#[derive(Debug)]
+pub struct ContinueOutcome<D: 'static, T: State<D>>(PhantomData<(T, D)>);
+
+impl<D: 'static, T: State<D>> Default for ContinueOutcome<D, T> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
 
 /// An Outcome type useful for transiting from one state to another
 /// 
@@ -426,18 +432,19 @@ pub struct ContinueOutcome<T: State>(PhantomData<T>);
 /// the provided data is accurate to the type being transitioned to, 
 /// preventing one possible source of error
 #[derive(Debug)]
-pub struct OutcomeData<T: State>(T::Income, String);
+pub struct OutcomeData<D: 'static, T: State<D>>(T::Income, String);
 
-impl<T> OutcomeData<T>
+impl<D, T> OutcomeData<D, T>
 where
-    T: State,
+    D: 'static,
+    T: State<D>,
 {
     /// Construct a new outcome with the default name
-    pub fn new(data: T::Income) -> OutcomeData<T> {
+    pub fn new(data: T::Income) -> OutcomeData<D, T> {
         OutcomeData(data, type_name::<T>().to_string())
     }
 
-    pub const fn with_name(data: T::Income, name: String) -> OutcomeData<T> {
+    pub const fn with_name(data: T::Income, name: String) -> OutcomeData<D, T> {
         OutcomeData(data, name)
     }
 }
@@ -504,9 +511,9 @@ impl Outcome for () {
     }
 }
 
-impl<T> Outcome for OutcomeData<T>
+impl<D, T> Outcome for OutcomeData<D, T>
 where
-    T: State,
+    T: State<D>,
 {
     fn state_type(&self) -> TypeId {
         TypeId::of::<T>()
@@ -521,9 +528,9 @@ where
     }
 }
 
-impl<T> Outcome for ContinueOutcome<T>
+impl<D, T> Outcome for ContinueOutcome<D, T>
 where
-    T: State,
+    T: State<D>,
 {
     fn state_type(&self) -> TypeId {
         TypeId::of::<T>()
@@ -603,10 +610,9 @@ mod tests {
         }
     }
 
-    impl State for Start {
+    impl State<Data> for Start {
         type Income = usize;
         type Transition = StartTransition;
-        type Data = Data;
 
         fn init(&mut self, previous: Box<Self::Income>) {
             assert!(self.0);
@@ -615,7 +621,7 @@ mod tests {
             }
         }
 
-        fn handle(&mut self, data: &mut Self::Data) -> Self::Transition {
+        fn handle(&mut self, data: &mut Data) -> Self::Transition {
             if self.0 {
                 self.0 = false;
                 StartTransition::Continue
@@ -646,15 +652,14 @@ mod tests {
             if self.0 {
                 ().into_outcome()
             } else {
-                OutcomeData::<End>::with_name(0, "EndTransitionContinue".to_string()).into_outcome()
+                OutcomeData::<Data, End>::with_name(0, "EndTransitionContinue".to_string()).into_outcome()
             }
         }
     }
 
-    impl State for End {
+    impl State<Data> for End {
         type Income = isize;
         type Transition = EndTransition;
-        type Data = Data;
 
         fn init(&mut self, previous: Box<Self::Income>) {
             assert_eq!(self.0, 0);
@@ -662,7 +667,7 @@ mod tests {
             self.0 = *previous as i32;
         }
 
-        fn handle(&mut self, data: &mut Self::Data) -> Self::Transition {
+        fn handle(&mut self, data: &mut Data) -> Self::Transition {
             self.0 -= 1;
             match data {
                 Data::Counting(i) => *i += 1,
@@ -683,12 +688,11 @@ mod tests {
     #[derive(Default)]
     struct MissingState;
 
-    impl State for MissingState {
+    impl<D: 'static> State<D> for MissingState {
         type Income = ();
         type Transition = ();
-        type Data = Data;
 
-        fn handle(&mut self, _data: &mut Self::Data) -> Self::Transition {}
+        fn handle(&mut self, _data: &mut D) -> Self::Transition {}
     }
 
     #[test]
@@ -741,7 +745,7 @@ mod tests {
                 assert_eq!(start, "Start");
                 assert_eq!(transition, "WrongData");
                 assert_eq!(end, "End");
-                assert_eq!(expected_type, TypeId::of::<<End as State>::Income>());
+                assert_eq!(expected_type, TypeId::of::<<End as State<Data>>::Income>());
                 assert_eq!(
                     received_data.downcast().expect("Given type should be .."),
                     Box::new(..)
@@ -777,7 +781,7 @@ mod tests {
                 assert_eq!(start, "Start");
                 assert_eq!(transition, "WrongData");
                 assert_eq!(end, "End");
-                assert_eq!(expected_type, TypeId::of::<<End as State>::Income>());
+                assert_eq!(expected_type, TypeId::of::<<End as State<Data>>::Income>());
                 assert_eq!(
                     received_data.downcast().expect("Given type should be .."),
                     Box::new(..)
