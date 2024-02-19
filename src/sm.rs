@@ -70,7 +70,6 @@ pub struct StateMachineRunner<'a, Data: 'static> {
     machine: &'a StateMachine<Data>,
     pub data: Data,
     state: Box<dyn StateInternal<Data>>,
-    state_id: TypeId,
 }
 
 impl<'a, D: fmt::Debug + 'static> fmt::Debug for StateMachineRunner<'a, D> {
@@ -79,7 +78,6 @@ impl<'a, D: fmt::Debug + 'static> fmt::Debug for StateMachineRunner<'a, D> {
             .field("machine", &self.machine)
             .field("data", &self.data)
             .field("state", &self.state.type_id())
-            .field("state_id", &self.state_id)
             .finish()
     }
 }
@@ -256,7 +254,6 @@ impl<'a, D> StateMachineRunner<'a, D> {
             machine,
             data,
             state,
-            state_id,
         })
     }
 
@@ -264,24 +261,24 @@ impl<'a, D> StateMachineRunner<'a, D> {
     /// Returns an outcome representing all possible outcomes of the step
     pub fn step(mut self) -> StepOutcome<'a, D> {
         let outcome = self.state.handle(&mut self.data);
-        if outcome.state_type() == self.state_id {
+        if outcome.state_type() == self.state.as_ref().type_id() {
             return StepOutcome::Continue { machine: self };
         }
         let start = self.state.name();
         let transition = outcome.name();
-        self.state_id = outcome.state_type();
-        if self.state_id == TypeId::of::<()>() {
+        let new_state_id = outcome.state_type();
+        if new_state_id == TypeId::of::<()>() {
             return StepOutcome::Complete {
                 data: self.data,
                 start,
                 transition,
             };
         }
-        let Some(state) = self.machine.make_state(self.state_id) else {
+        let Some(state) = self.machine.make_state(new_state_id) else {
             return StepOutcome::StateNotFound {
                 start,
                 transition,
-                end: self.state_id,
+                end: new_state_id,
             };
         };
         self.state = state;
@@ -364,7 +361,7 @@ impl StateEntryError {
 }
 
 /// Internal representation of a state which is object safe without specifying the associated types
-trait StateInternal<Data> {
+trait StateInternal<Data>: Any {
     fn enter(&mut self, meta: Box<dyn Any>) -> Result<(), StateEntryError>;
     fn handle(&mut self, data: &mut Data) -> BoxedOutcome;
     fn name(&self) -> String;
