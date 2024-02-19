@@ -11,12 +11,12 @@ use std::{
 /// 
 /// This struct itself does not _run_ any state machine,
 /// a StateMachineRunner contains a reference to a StateMachine
-/// and an instance of the machine
-pub struct StateMachine<Data> {
-    states: HashMap<TypeId, Box<dyn StateHolder<Data>>>,
+/// and is an instance of the machine
+pub struct StateMachine<Data: 'static> {
+    states: HashMap<TypeId, &'static dyn StateHolder<Data>>,
 }
 
-impl<D: fmt::Debug + 'static> fmt::Debug for StateMachine<D> {
+impl<D: fmt::Debug> fmt::Debug for StateMachine<D> {
     fn fmt<'a>(&self, f: &mut fmt::Formatter<'a>) -> fmt::Result {
         let state_ids: HashMap<TypeId, TypeId> =
             self.states.iter().map(|(k, v)| (*k, v.type_id())).collect();
@@ -26,6 +26,7 @@ impl<D: fmt::Debug + 'static> fmt::Debug for StateMachine<D> {
     }
 }
 
+// Manually implemented because derive macro requires D: Default
 impl<D> Default for StateMachine<D> {
     fn default() -> Self {
         Self {
@@ -40,7 +41,7 @@ impl<D> StateMachine<D> {
     pub fn add_state<T: State<Data = D>>(&mut self) {
         self.states
             .entry(TypeId::of::<T>())
-            .or_insert(Box::new(StateHolderStruct::<T>::default()));
+            .or_insert(&StateHolderStruct::<T>(PhantomData)); // reference is constant promoted to 'static
     }
 
     /// Returns true if T was already in the state machine
@@ -65,7 +66,7 @@ impl<D> StateMachine<D> {
 
 
 /// The state machine runner runs an instance of a given StateMachine
-pub struct StateMachineRunner<'a, Data> {
+pub struct StateMachineRunner<'a, Data: 'static> {
     machine: &'a StateMachine<Data>,
     pub data: Data,
     state: Box<dyn StateInternal<Data>>,
@@ -83,7 +84,7 @@ impl<'a, D: fmt::Debug + 'static> fmt::Debug for StateMachineRunner<'a, D> {
     }
 }
 
-pub enum StepOutcome<'a, Data> {
+pub enum StepOutcome<'a, Data: 'static> {
     Continue {
         machine: StateMachineRunner<'a, Data>,
     },
@@ -427,6 +428,12 @@ pub struct ContinueOutcome<T: State>(PhantomData<T>);
 /// preventing one possible source of error
 #[derive(Debug)]
 pub struct OutcomeData<T: State>(T::Income, String);
+
+impl<T: State> Default for OutcomeData<T> where T::Income: Default {
+    fn default() -> Self {
+        Self::new(Default::default())
+    }
+}
 
 impl<T> OutcomeData<T>
 where
