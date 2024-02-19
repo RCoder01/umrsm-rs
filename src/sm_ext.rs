@@ -59,13 +59,11 @@ pub trait TimedState: Default + 'static {
 /// 
 /// type MayLoop = TimedStateStruct<MayLoopInner>;
 /// 
-/// fn main() {
-///     let mut machine = StateMachine::default();
-///     machine.add_state::<MayLoop>();
+/// let mut machine = StateMachine::default();
+/// machine.add_state::<MayLoop>();
 /// 
-///     let runner = machine.runner::<MayLoop>(0, ()).expect("MayLoop exists in the machine");
-///     assert_ne!(runner.run_to_completion().expect("Should not error"), 0);
-/// }
+/// let runner = machine.runner::<MayLoop>(0, ()).expect("MayLoop exists in the machine");
+/// assert_ne!(runner.run_to_completion().expect("Should not error"), 0);
 pub struct TimedStateStruct<S: TimedState> {
     timeout: Duration,
     start_time: Instant,

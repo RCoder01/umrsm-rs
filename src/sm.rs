@@ -17,7 +17,7 @@ pub struct StateMachine<Data: 'static> {
 }
 
 impl<D: fmt::Debug> fmt::Debug for StateMachine<D> {
-    fn fmt<'a>(&self, f: &mut fmt::Formatter<'a>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let state_ids: HashMap<TypeId, TypeId> =
             self.states.iter().map(|(k, v)| (*k, v.type_id())).collect();
         f.debug_struct("StateMachine")
@@ -60,7 +60,7 @@ impl<D> StateMachine<D> {
     }
 
     fn make_state(&self, state: TypeId) -> Option<Box<dyn StateInternal<D>>> {
-        self.states.get(&state).map(|sh| sh.new())
+        self.states.get(&state).map(|sh| sh.make())
     }
 }
 
@@ -114,10 +114,7 @@ pub enum StepOutcome<'a, Data: 'static> {
 impl<'a, D> StepOutcome<'a, D> {
     /// Returns false if and only if Self == StepOutcome::Continue
     pub fn is_notable(&self) -> bool {
-        match self {
-            StepOutcome::Continue { .. } => false,
-            _ => true,
-        }
+        !matches!(self, StepOutcome::Continue { .. })
     }
 
     /// Prints self if it is non-empty
@@ -219,7 +216,7 @@ impl<'a, D> Display for StepOutcome<'a, D> {
                 received_data,
             } => {
                 write!(f, "{start} --[{transition}!]--> {end}").and(
-                    write!(f, "{end} expected incoming data of type {expected_type:?} but received data of type {:?} from transition {transition}", received_data.type_id()))
+                    write!(f, "{end} expected incoming data of type {expected_type:?} but received data of type {:?} from transition {transition}", (**received_data).type_id()))
             }
         }
     }
@@ -261,7 +258,7 @@ impl<'a, D> StateMachineRunner<'a, D> {
     /// Returns an outcome representing all possible outcomes of the step
     pub fn step(mut self) -> StepOutcome<'a, D> {
         let outcome = self.state.handle(&mut self.data);
-        if outcome.state_type() == self.state.as_ref().type_id() {
+        if outcome.state_type() == <dyn StateInternal<_> as Any>::type_id(&*self.state) {
             return StepOutcome::Continue { machine: self };
         }
         let start = self.state.name();
@@ -283,7 +280,7 @@ impl<'a, D> StateMachineRunner<'a, D> {
         };
         self.state = state;
         let end = self.state.name();
-        return match self.state.enter(outcome.data()) {
+        match self.state.enter(outcome.data()) {
             Ok(_) => StepOutcome::Transition {
                 machine: self,
                 start,
@@ -297,7 +294,7 @@ impl<'a, D> StateMachineRunner<'a, D> {
                 expected_type: data.expected,
                 received_data: data.received,
             },
-        };
+        }
     }
 
     /// Run the state machine until it either errors or completes
@@ -330,7 +327,7 @@ struct StateHolderStruct<T: State>(PhantomData<T>);
 /// Holding `Box<dyn StateHolder>` allows the state machine to only hold the 
 /// active state and construction instructions for all other states
 trait StateHolder<Data> {
-    fn new(&self) -> Box<dyn StateInternal<Data>>;
+    fn make(&self) -> Box<dyn StateInternal<Data>>;
 }
 
 impl<D, T, I, O> StateHolder<D> for StateHolderStruct<T>
@@ -339,8 +336,8 @@ where
     I: 'static,
     O: IntoOutcome + 'static,
 {
-    fn new(&self) -> Box<dyn StateInternal<D>> {
-        Box::new(T::default())
+    fn make(&self) -> Box<dyn StateInternal<D>> {
+        Box::<T>::default()
     }
 }
 
@@ -410,7 +407,7 @@ where
     }
 
     fn name(&self) -> String {
-        <Self as State>::name(&self)
+        <Self as State>::name(self)
     }
 }
 
