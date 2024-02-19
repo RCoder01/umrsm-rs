@@ -561,7 +561,7 @@ where
 mod tests {
     use super::StateMachine;
     use crate::sm::{BoxedOutcome, IntoOutcome, Outcome, OutcomeData, State, StepOutcome};
-    use std::any::TypeId;
+    use std::{any::TypeId, marker::PhantomData};
 
     #[derive(Debug, PartialEq, Eq)]
     enum Data {
@@ -929,4 +929,144 @@ mod tests {
     //         e @ _ => panic!("Unexpeced runner outcome {e:?}"),
     //     }
     // }
+
+    trait LikeI32: 'static {
+        fn get(&self) -> &i32;
+        fn get_mut(&mut self) -> &mut i32;
+    }
+
+    impl LikeI32 for i32 {
+        fn get(&self) -> &i32 {
+            self
+        }
+
+        fn get_mut(&mut self) -> &mut i32 {
+            self
+        }
+    }
+
+    impl LikeI32 for [i32; 1] {
+        fn get(&self) -> &i32 {
+            &self[0]
+        }
+
+        fn get_mut(&mut self) -> &mut i32 {
+            &mut self[0]
+        }
+    }
+
+    enum Void {}
+
+    enum CollatzOutcome<D> {
+        Even,
+        Odd,
+        _Unused(D, Void),
+    }
+
+    impl<D> CollatzOutcome<D> {
+        pub fn new(v: i32) -> Self {
+            if v % 2 == 0 {
+                Self::Even
+            } else {
+                Self::Odd
+            }
+        }
+    }
+
+    impl<D: LikeI32> IntoOutcome for CollatzOutcome<D> {
+        fn into_outcome(self) -> BoxedOutcome {
+            match self {
+                CollatzOutcome::Even => OutcomeData::<Even<D>>::with_name((), "CollatzOutcome::Even".to_string()).into_outcome(),
+                CollatzOutcome::Odd => OutcomeData::<Odd<D>>::with_name((), "CollatzOutcome::Odd".to_string()).into_outcome(),
+                _ => unreachable!()
+            }
+        }
+    }
+
+    struct Even<D>(PhantomData<D>);
+
+    impl<D: LikeI32> Default for Even<D> {
+        fn default() -> Self {
+            Self(Default::default())
+        }
+    }
+
+    impl<D: LikeI32> State for Even<D> {
+        type Income = ();
+        type Transition = CollatzOutcome<D>;
+        type Data = D;
+
+        fn handle(&mut self, data: &mut Self::Data) -> Self::Transition {
+            *data.get_mut() = *data.get() / 2;
+            CollatzOutcome::new(*data.get())
+        }
+
+        fn name(&self) -> String {
+            "Even".to_string()
+        }
+    }
+
+    struct Odd<D>(PhantomData<D>);
+
+    impl<D: LikeI32> Default for Odd<D> {
+        fn default() -> Self {
+            Self(Default::default())
+        }
+    }
+
+    impl<D: LikeI32> State for Odd<D> {
+        type Income = ();
+        type Transition = CollatzOutcome<D>;
+        type Data = D;
+
+        fn handle(&mut self, data: &mut Self::Data) -> Self::Transition {
+            *data.get_mut() = *data.get() * 3 + 1;
+            CollatzOutcome::new(*data.get())
+        }
+
+        fn name(&self) -> String {
+            "Odd".to_string()
+        }
+    }
+
+
+    #[test]
+    fn generic_states() {
+        let mut machine = StateMachine::default();
+        machine.add_state::<Even<_>>();
+        machine.add_state::<Odd<_>>();
+
+        let mut runner = machine.runner::<Odd<[i32; 1]>>([123], ()).unwrap();
+        match runner.step() {
+            StepOutcome::Transition {
+                machine,
+                start,
+                transition,
+                end,
+            } => {
+                runner = machine;
+                assert_eq!(start, "Odd");
+                assert_eq!(transition, "CollatzOutcome::Even");
+                assert_eq!(end, "Even");
+            }
+            e @ _ => panic!("Unexpeced runner outcome {e:?}"),
+        }
+
+        match runner.step() {
+            StepOutcome::Transition {
+                machine,
+                start,
+                transition,
+                end,
+            } => {
+                runner = machine;
+                assert_eq!(start, "Even");
+                assert_eq!(transition, "CollatzOutcome::Odd");
+                assert_eq!(end, "Odd");
+            }
+            e @ _ => panic!("Unexpeced runner outcome {e:?}"),
+        }
+
+        assert_eq!(runner.data, [185]);
+    }
 }
