@@ -13,7 +13,7 @@ use std::{
 /// a StateMachineRunner contains a reference to a StateMachine
 /// and is an instance of the machine
 pub struct StateMachine<Data: 'static> {
-    states: HashMap<TypeId, &'static dyn StateHolder<Data>>,
+    states: HashMap<TypeId, fn() -> Box<dyn StateInternal<Data>>>,
 }
 
 impl<D: fmt::Debug> fmt::Debug for StateMachine<D> {
@@ -41,7 +41,7 @@ impl<D> StateMachine<D> {
     pub fn add_state<T: State<Data = D>>(&mut self) {
         self.states
             .entry(TypeId::of::<T>())
-            .or_insert(&StateHolderStruct::<T>(PhantomData)); // reference is constant promoted to 'static
+            .or_insert(|| Box::<T>::default() as _);
     }
 
     /// Returns true if T was already in the state machine
@@ -60,7 +60,7 @@ impl<D> StateMachine<D> {
     }
 
     fn make_state(&self, state: TypeId) -> Option<Box<dyn StateInternal<D>>> {
-        self.states.get(&state).map(|sh| sh.make())
+        self.states.get(&state).map(|sh| sh())
     }
 }
 
@@ -317,27 +317,6 @@ impl<'a, D> StateMachineRunner<'a, D> {
                 Err(data) => return data,
             }
         }
-    }
-}
-
-/// Used to remember how to construct states through the StateHolder trait
-#[derive(Default)]
-struct StateHolderStruct<T: State>(PhantomData<T>);
-
-/// Holding `Box<dyn StateHolder>` allows the state machine to only hold the 
-/// active state and construction instructions for all other states
-trait StateHolder<Data> {
-    fn make(&self) -> Box<dyn StateInternal<Data>>;
-}
-
-impl<D, T, I, O> StateHolder<D> for StateHolderStruct<T>
-where
-    T: State<Income = I, Transition = O, Data = D>,
-    I: 'static,
-    O: IntoOutcome + 'static,
-{
-    fn make(&self) -> Box<dyn StateInternal<D>> {
-        Box::<T>::default()
     }
 }
 
